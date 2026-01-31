@@ -3,57 +3,79 @@ import pandas as pd
 from io import BytesIO
 from openpyxl.styles import Font, PatternFill, Alignment
 
-st.set_page_config(page_title="Organizador de Inventário", page_icon="🖥️")
+st.set_page_config(page_title="Inventário Filial 944", page_icon="📝")
 
-st.title("🖥️ Organizador de Inventário - Filial 944")
-st.write("Agrupa Tapes, Racks, Storages e Servidores na aba 'SERVIDOR' e organiza o restante.")
+st.title("📝 Gerador de Inventário com Título")
+st.write("Cada aba terá o título: 'inventario filial 944 - [Tipo]'")
 
-uploaded_file = st.file_uploader("Envie o arquivo CSV", type="csv")
+uploaded_file = st.file_uploader("Escolha o arquivo CSV", type="csv")
 
 if uploaded_file is not None:
     try:
-        # Lendo o arquivo
         df = pd.read_csv(uploaded_file, sep=';')
         
-        # 1. Definir a regra de agrupamento especial
-        # Mapeamos os tipos que devem ir para a aba "SERVIDOR"
-        tipos_servidor = ['SERVIDOR', 'TAPE', 'RACK', 'STORAGE']
-        
-        # Criamos uma coluna temporária para definir o nome da aba
-        df['ABA_DESTINO'] = df['TIPO'].apply(lambda x: 'SERVIDOR' if str(x).upper() in tipos_servidor else x)
-        
+        # --- LÓGICA DE DEFINIÇÃO DAS ABAS ---
+        def definir_aba(linha):
+            tipo = str(linha['TIPO']).upper()
+            sub_tipo = str(linha['SUB TIPO']).upper()
+            
+            # Scanners de Mão
+            if tipo == 'SCANER' and 'MÃO' in sub_tipo:
+                return 'SCANER DE MÃO'
+            
+            # Infraestrutura (Servidor)
+            tipos_servidor = ['SERVIDOR', 'TAPE', 'RACK', 'STORAGE']
+            if tipo in tipos_servidor:
+                return 'SERVIDOR'
+            
+            return tipo
+
+        df['ABA_DESTINO'] = df.apply(definir_aba, axis=1)
         colunas_remover = ['FILIAL', 'TIPO', 'SUB TIPO', 'COMPLEMENTO', 'ABA_DESTINO']
 
-        if st.button("🚀 Gerar Planilha Organizada"):
+        if st.button("🚀 Gerar Planilha com Títulos"):
             output = BytesIO()
             
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Agrupamos pela nova coluna 'ABA_DESTINO'
-                for nome_aba, grupo in df.groupby('ABA_DESTINO'):
-                    # Ordenar os dados internamente (se for servidor, organiza por tipo original)
-                    grupo_ordenado = grupo.sort_values(by=['TIPO', 'PIP'])
+                abas = sorted(df['ABA_DESTINO'].unique())
+                
+                for nome_aba in abas:
+                    grupo = df[df['ABA_DESTINO'] == nome_aba]
+                    grupo_ordenado = grupo.sort_values(by=['PIP'], ascending=True)
                     
-                    # Nome da aba (limite de 31 caracteres)
                     nome_final_aba = str(nome_aba)[:31].replace('/', '-')
-                    
-                    # Limpeza das colunas
                     tabela_final = grupo_ordenado.drop(columns=colunas_remover, errors='ignore')
                     
-                    # Salva na aba
-                    tabela_final.to_excel(writer, sheet_name=nome_final_aba, index=False)
+                    # 1. Escrever a tabela começando na linha 2 (startrow=1)
+                    # O pandas conta a partir de 0, então startrow=1 é a segunda linha do Excel
+                    tabela_final.to_excel(writer, sheet_name=nome_final_aba, index=False, startrow=1)
                     
-                    # --- Estilização ---
                     ws = writer.sheets[nome_final_aba]
+                    
+                    # 2. Inserir o Título na primeira linha
+                    titulo = f"inventario filial 944 - {nome_final_aba}"
+                    ws.cell(row=1, column=1).value = titulo
+                    
+                    # Mesclar as células do título (da coluna A até a última coluna da tabela)
+                    num_colunas = len(tabela_final.columns)
+                    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_colunas)
+                    
+                    # Estilo do Título (Cinza claro, negrito, centralizado)
+                    titulo_cell = ws.cell(row=1, column=1)
+                    titulo_cell.font = Font(size=14, bold=True, color="000000")
+                    titulo_cell.fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+                    titulo_cell.alignment = Alignment(horizontal="center", vertical="center")
+                    
+                    # 3. Estilo do Cabeçalho da Tabela (Linha 2)
                     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
                     header_font = Font(color="FFFFFF", bold=True)
-                    header_align = Alignment(horizontal="center", vertical="center")
-
-                    for cell in ws[1]:
+                    
+                    for cell in ws[2]: # Agora o cabeçalho está na linha 2
                         cell.fill = header_fill
                         cell.font = header_font
-                        cell.alignment = header_align
+                        cell.alignment = Alignment(horizontal="center")
 
-                    # Ajuste automático de colunas
+                    # 4. Ajuste automático de colunas
                     for col in ws.columns:
                         max_length = 0
                         column_letter = col[0].column_letter
@@ -65,12 +87,12 @@ if uploaded_file is not None:
                         ws.column_dimensions[column_letter].width = max_length + 4
 
             st.download_button(
-                label="📥 Baixar Inventário Atualizado",
+                label="📥 Baixar Inventário com Títulos",
                 data=output.getvalue(),
-                file_name="Inventario_Filial_944.xlsx",
+                file_name="Inventario_Filial_944_Titulos.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.success("Pronto! Aba SERVIDOR unificada e formatada.")
+            st.success("Tabelas geradas com títulos no topo!")
 
     except Exception as e:
         st.error(f"Erro: {e}")
