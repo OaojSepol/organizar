@@ -7,106 +7,101 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Inventário Filial 944", page_icon="📝")
 
 st.title("📝 Gerador de Inventário - Filial 944")
-st.write("Organização automática por abas (incluindo separação de Scaner de Mão via Complemento).")
+st.write("Organização por abas: Scaner de Mão vs Scaner de Mesa, e Servidores agrupados.")
 
 uploaded_file = st.file_uploader("Escolha o arquivo CSV", type="csv")
 
 if uploaded_file is not None:
     try:
-        # Lendo o arquivo original
+        # Lendo o arquivo (garantindo que os nomes das colunas fiquem em maiúsculo para evitar erro)
         df = pd.read_csv(uploaded_file, sep=';')
+        df.columns = [c.strip().upper() for c in df.columns]
         
-        # --- LÓGICA DE DEFINIÇÃO DAS ABAS (REVISADA) ---
+        # --- LÓGICA DE DEFINIÇÃO DAS ABAS ---
         def definir_aba(linha):
-            tipo = str(linha['TIPO']).upper()
+            # Forçamos a leitura para maiúsculo para comparar
+            tipo_original = str(linha.get('TIPO', '')).upper().strip()
             sub_tipo = str(linha.get('SUB TIPO', '')).upper()
             complemento = str(linha.get('COMPLEMENTO', '')).upper()
             
-            # 1. Regra para Scanners de Mão (Verifica SUB TIPO ou COMPLEMENTO)
-            if tipo == 'SCANER' and ('MÃO' in sub_tipo or 'MÃO' in complemento):
+            # 1. Regra para SCANER DE MÃO (Se tiver a palavra MÃO no sub-tipo ou complemento)
+            if tipo_original == 'SCANER' and ('MÃO' in sub_tipo or 'MÃO' in complemento):
                 return 'SCANER DE MÃO'
             
-            # 2. Regra para a aba SERVIDOR (Unificada: Servidor, Tape, Rack, Storage)
-            tipos_servidor = ['SERVIDOR', 'TAPE', 'RACK', 'STORAGE']
-            if tipo in tipos_servidor:
+            # 2. Regra para SCANER NORMAL (Mesa/Outros)
+            if tipo_original == 'SCANER':
+                return 'SCANER'
+            
+            # 3. Regra para a aba SERVIDOR (Unificada: Servidor, Tape, Rack, Storage)
+            infra = ['SERVIDOR', 'TAPE', 'RACK', 'STORAGE']
+            if tipo_original in infra:
                 return 'SERVIDOR'
             
-            # 3. Padrão: Usa o próprio TIPO (ex: MONITOR, CPU)
-            return tipo
+            # 4. Outros (MONITOR, CPU, etc)
+            return tipo_original if tipo_original != "" else "OUTROS"
 
-        # Criar a coluna que define o nome da aba
+        # Criar a coluna de destino
         df['ABA_DESTINO'] = df.apply(definir_aba, axis=1)
         
-        # Colunas que serão removidas da visualização final (conforme pedido)
+        # Colunas que serão removidas da visualização final
         colunas_remover = ['FILIAL', 'TIPO', 'SUB TIPO', 'COMPLEMENTO', 'ABA_DESTINO']
 
-        if st.button("🚀 Gerar Planilha Organizada"):
+        if st.button("🚀 Gerar Planilha"):
             output = BytesIO()
             
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Pegar nomes das abas únicos e ordenados
-                abas = sorted(df['ABA_DESTINO'].unique())
+                # Pegar nomes das abas únicos
+                lista_abas = sorted(df['ABA_DESTINO'].unique())
                 
-                for nome_aba in abas:
-                    grupo = df[df['ABA_DESTINO'] == nome_aba]
+                for nome_aba in lista_abas:
+                    # Filtra o grupo correspondente à aba
+                    grupo = df[df['ABA_DESTINO'] == nome_aba].copy()
                     
-                    # Ordenar por PIP para ficar organizado
-                    grupo_ordenado = grupo.sort_values(by=['PIP'], ascending=True)
+                    if grupo.empty:
+                        continue
+                        
+                    # Ordenar por PIP
+                    grupo = grupo.sort_values(by=['PIP'], ascending=True)
                     
+                    # Nome da aba (máximo 31 caracteres)
                     nome_final_aba = str(nome_aba)[:31].replace('/', '-')
-                    tabela_final = grupo_ordenado.drop(columns=colunas_remover, errors='ignore')
                     
-                    # Escrever tabela na linha 2 (deixando a linha 1 para o título)
+                    # Limpa as colunas para o Excel
+                    tabela_final = grupo.drop(columns=colunas_remover, errors='ignore')
+                    
+                    # Salva na linha 2 (startrow=1)
                     tabela_final.to_excel(writer, sheet_name=nome_final_aba, index=False, startrow=1)
                     
                     ws = writer.sheets[nome_final_aba]
                     
-                    # --- 1. Título Superior ---
-                    titulo_texto = f"inventario filial 944 - {nome_final_aba}"
-                    ws.cell(row=1, column=1).value = titulo_texto
-                    num_colunas = len(tabela_final.columns)
-                    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_colunas)
+                    # --- Título na linha 1 ---
+                    ws.cell(row=1, column=1).value = f"inventario filial 944 - {nome_final_aba}"
+                    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(tabela_final.columns))
                     
                     # Estilo do Título
-                    titulo_cell = ws.cell(row=1, column=1)
-                    titulo_cell.font = Font(size=12, bold=True)
-                    titulo_cell.fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-                    titulo_cell.alignment = Alignment(horizontal="center", vertical="center")
+                    ws.cell(row=1, column=1).font = Font(size=12, bold=True)
+                    ws.cell(row=1, column=1).fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+                    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
                     
-                    # --- 2. Estilo do Cabeçalho da Tabela (Linha 2) ---
-                    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-                    header_font = Font(color="FFFFFF", bold=True)
+                    # Estilo do Cabeçalho (Linha 2)
                     for cell in ws[2]:
-                        cell.fill = header_fill
-                        cell.font = header_font
+                        cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                        cell.font = Font(color="FFFFFF", bold=True)
                         cell.alignment = Alignment(horizontal="center")
 
-                    # --- 3. Ajuste Automático de Largura das Colunas ---
-                    for i, col_name in enumerate(tabela_final.columns, 1):
+                    # Ajuste de largura
+                    for i, col in enumerate(tabela_final.columns, 1):
                         column_letter = get_column_letter(i)
-                        
-                        # Tamanho inicial baseado no cabeçalho
-                        max_length = len(str(col_name))
-                        
-                        # Verifica todas as linhas daquela coluna
-                        for row in range(2, ws.max_row + 1):
-                            val = ws.cell(row=row, column=i).value
-                            if val:
-                                length = len(str(val))
-                                if length > max_length:
-                                    max_length = length
-                        
-                        # Define a largura com uma pequena margem
-                        ws.column_dimensions[column_letter].width = max_length + 4
+                        max_len = max([len(str(x)) for x in grupo[col].values] + [len(col)])
+                        ws.column_dimensions[column_letter].width = max_len + 5
 
-            # Preparar download
             st.download_button(
-                label="📥 Baixar Inventário Excel",
+                label="📥 Baixar Inventário",
                 data=output.getvalue(),
-                file_name="Inventario_Filial_944_Atualizado.xlsx",
+                file_name="Inventario_Filial_944.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.success(f"Arquivo gerado! Identificamos {len(abas)} categorias diferentes.")
+            st.success("Planilha processada com sucesso!")
 
     except Exception as e:
-        st.error(f"Erro ao processar: {e}")
+        st.error(f"Erro: {e}")
